@@ -5,7 +5,11 @@
 #ifndef BRAINCURSES_H
 #define BRAINCURSES_H
 
+#ifdef _WIN32
+#include <curses.h>  // PDCurses
+#else
 #include <ncurses.h>
+#endif
 #include <string>
 #include <unordered_map>
 #include <utility>

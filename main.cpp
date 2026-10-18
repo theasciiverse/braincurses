@@ -76,12 +76,17 @@ int main(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
 
+#ifdef _WIN32
+  std::signal(SIGINT, quit_signal_handler);
+  std::signal(SIGTERM, quit_signal_handler);
+#else
   struct sigaction action = {};
   action.sa_handler = quit_signal_handler;
   sigemptyset(&action.sa_mask);
   sigaction(SIGINT, &action, nullptr);
   sigaction(SIGTERM, &action, nullptr);
   sigaction(SIGHUP, &action, nullptr);
+#endif
 
   // Box drawing and the rest in the terminal's own character set.
   std::setlocale(LC_ALL, "");

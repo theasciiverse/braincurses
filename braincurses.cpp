@@ -68,7 +68,11 @@ void Braincurses::CreateWindows() {
     mvaddstr(1, 0, "BrainCurses needs 60x23.");
     mvaddstr(2, 0, "q quits.");
     refresh();
-    GetKey(stdscr);
+    if (GetKey(stdscr) == KEY_RESIZE) {
+#ifdef PDCURSES
+      resize_term(0, 0);
+#endif
+    }
   }
   erase();
   refresh();
@@ -120,6 +124,9 @@ void Braincurses::Redraw() {
 }
 
 void Braincurses::Resize() {
+#ifdef PDCURSES
+  resize_term(0, 0);
+#endif
   CreateWindows();
   Redraw();
 }
