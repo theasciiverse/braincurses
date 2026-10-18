@@ -4,6 +4,7 @@
 
 #include "braincurses.h"
 
+#include <algorithm>
 #include <cstdlib>
 
 #include "code.h"
@@ -196,9 +197,11 @@ std::vector<int> Braincurses::GetInput() {
         }
         break;
       case KEY_RIGHT:
-        if (x < code_.Length()) {
-          wmove(local_window, 1, column[x]);
+        // Only over a colour already chosen, and never past the last field:
+        // moving off the end used to end the guess with fields left empty.
+        if (x < code_.Length() - 1 && guessInput[x] != -1) {
           x++;
+          wmove(local_window, 1, column[x]);
         }
         break;
       case KEY_BACKSPACE:
@@ -212,10 +215,17 @@ std::vector<int> Braincurses::GetInput() {
       default:
         break;
     }
-    wrefresh(local_window);
     if (x == code_.Length()) {
-      break;
+      // The guess is done once every field has a colour; otherwise go back
+      // to the first empty one.
+      auto empty = std::find(guessInput.begin(), guessInput.end(), -1);
+      if (empty == guessInput.end()) {
+        break;
+      }
+      x = empty - guessInput.begin();
+      wmove(local_window, 1, column[x]);
     }
+    wrefresh(local_window);
   }
   CleanUpWindow(local_window);
   return guessInput;
