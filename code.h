@@ -54,7 +54,7 @@ class Code {
     std::vector<int> IsCorrect(Iterator guess_start, Iterator guess_end) const {
       if (std::equal(code_.begin(), code_.end(), guess_start)) {
         // It's our lucky day!
-        std::vector<int> result(4, 2);
+        std::vector<int> result(code_.size(), code::kNailedIt);
         return result;
       }
 
