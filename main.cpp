@@ -2,6 +2,7 @@
  * Copyright © 2015, Brian Derr <brian@derrclan.com>
  */
 
+#include <clocale>
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
@@ -65,6 +66,9 @@ int main(int argc, char* argv[]) {
   int code_length = kMinCodeLength;
   int guesses = kDefaultGuessCount;
   ProcessArgs(argc, argv, code_length, guesses);
+
+  // Box drawing and the rest in the terminal's own character set.
+  std::setlocale(LC_ALL, "");
 
   Braincurses bc(code_length, guesses);
 

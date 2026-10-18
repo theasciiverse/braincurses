@@ -19,7 +19,7 @@ const std::unordered_map<int, std::vector<int>> codePosition = {
 
 
 Braincurses::Braincurses(int code_length, int guesses) : 
-    code_(Code(code_length)), guesses_(guesses), initialized_(false) {
+    code_(Code(code_length)), guesses_(guesses), initialized_(false), code_shown_(false) {
   InitializeNcurses();
 }
 
@@ -49,17 +49,78 @@ void Braincurses::InitializeNcurses() {
   cbreak();
   noecho();
   intrflush(stdscr, FALSE);
+  keypad(stdscr, TRUE);
   curs_set(1);
 
-  windows_.emplace(kHeaderWindow, CreateWindow(3, 21, 0, 0));
-  windows_.emplace(kMarkerWindow, CreateWindow(17, 17, 3, 0));
-  windows_.emplace(kGuessWindow, CreateWindow(17, 17, 3, 21));
-  windows_.emplace(kCodeWindow, CreateWindow(3, 17, 0, 21));
-  windows_.emplace(kWatermarkWindow, CreateWindow(17, 4, 3, 17));
-  windows_.emplace(kInputWindow, CreateWindow(3, 60, 20, 0));
-  windows_.emplace(kInfoWindow, CreateWindow(20, 22, 0, 38));
+  CreateWindows();
 
   initialized_ = true;
+}
+
+// Creates the windows centred in the terminal. A terminal smaller than the
+// board gets a message instead, until it is made big enough.
+void Braincurses::CreateWindows() {
+  DeleteWindows();
+
+  while (LINES < kBoardHeight || COLS < kBoardWidth) {
+    erase();
+    mvaddstr(0, 0, "Terminal too small:");
+    mvaddstr(1, 0, "BrainCurses needs 60x23.");
+    mvaddstr(2, 0, "q quits.");
+    refresh();
+    int key = GetKey(stdscr);
+    if (key == 'q') {
+      exit(EXIT_SUCCESS);
+    }
+  }
+  erase();
+  refresh();
+
+  int y = (LINES - kBoardHeight) / 2;
+  int x = (COLS - kBoardWidth) / 2;
+
+  windows_.emplace(kHeaderWindow, CreateWindow(3, 21, y + 0, x + 0));
+  windows_.emplace(kMarkerWindow, CreateWindow(17, 17, y + 3, x + 0));
+  windows_.emplace(kGuessWindow, CreateWindow(17, 17, y + 3, x + 21));
+  windows_.emplace(kCodeWindow, CreateWindow(3, 17, y + 0, x + 21));
+  windows_.emplace(kWatermarkWindow, CreateWindow(17, 4, y + 3, x + 17));
+  windows_.emplace(kInputWindow, CreateWindow(3, 60, y + 20, x + 0));
+  windows_.emplace(kInfoWindow, CreateWindow(20, 22, y + 0, x + 38));
+
+  for (auto kv : windows_) {
+    keypad(kv.second, TRUE);
+  }
+}
+
+void Braincurses::DeleteWindows() {
+  for (auto kv : windows_) {
+    delwin(kv.second);
+  }
+  windows_.clear();
+}
+
+// Reads a key; a resized terminal is answered here by drawing the board
+// again in the middle.
+int Braincurses::GetKey(WINDOW* window) {
+  return wgetch(window);
+}
+
+// Draws everything that is on the board again, after the windows were made
+// anew.
+void Braincurses::Redraw() {
+  PrepareBoard();
+  int i = 0;
+  for (auto& turn : history_) {
+    DisplayGuess(i, turn.first);
+    DisplayMarkers(i, turn.second);
+    i++;
+  }
+  DisplayCode(code_shown_);
+}
+
+void Braincurses::Resize() {
+  CreateWindows();
+  Redraw();
 }
 
 void Braincurses::PrepareBoard() {
@@ -99,15 +160,33 @@ void Braincurses::PrepareBoard() {
 
   wattroff(windows_[kInfoWindow], A_BOLD);
 
+  mvwaddstr(windows_[kInfoWindow], 6, 2, "Type the first");
+  mvwaddstr(windows_[kInfoWindow], 7, 2, "letter of a color.");
+  mvwaddstr(windows_[kInfoWindow], 8, 2, "Arrows, Backspace:");
+  mvwaddstr(windows_[kInfoWindow], 9, 2, "change the guess.");
+  mvwaddstr(windows_[kInfoWindow], 10, 2, "q: quit");
+
+  // The result of the last game, if there is one.
+  size_t start = 0;
+  int row = 13;
+  while (start < message_.size()) {
+    size_t end = message_.find('\n', start);
+    if (end == std::string::npos) {
+      end = message_.size();
+    }
+    mvwaddstr(windows_[kInfoWindow], row++, 2, message_.substr(start, end - start).c_str());
+    start = end + 1;
+  }
+
 #ifdef DEBUG
   DisplayCode(true);
 #else
   DisplayCode(false);
 #endif
 
-  char guessLabel[3];
+  char guessLabel[12];
   for (int i = 1; i <= guesses_; i++) {
-    snprintf(guessLabel, 3, "%2d", i);
+    snprintf(guessLabel, sizeof(guessLabel), "%2d", i);
     mvwaddstr(windows_[kWatermarkWindow], 16 - i, 1, guessLabel);
   }
 
@@ -116,6 +195,9 @@ void Braincurses::PrepareBoard() {
   wnoutrefresh(windows_[kCodeWindow]);
   wnoutrefresh(windows_[kInfoWindow]);
   wnoutrefresh(windows_[kWatermarkWindow]);
+  wnoutrefresh(windows_[kMarkerWindow]);
+  wnoutrefresh(windows_[kGuessWindow]);
+  wnoutrefresh(windows_[kInputWindow]);
   doupdate();
 }
 
@@ -141,59 +223,61 @@ void Braincurses::WipeBoard() {
   }
 }
 
+static const int kColumn[6] = {2, 11, 20, 29, 38, 47};
+
+static const char* ColorName(int color) {
+  switch (color) {
+    case COLOR_RED: return "red";
+    case COLOR_GREEN: return "green";
+    case COLOR_YELLOW: return "yellow";
+    case COLOR_BLUE: return "blue";
+    case COLOR_MAGENTA: return "magenta";
+    case COLOR_CYAN: return "white";  // Really COLOR_WHITE
+    default: return "";
+  }
+}
+
+// Shows the colours of the guess being typed.
+void Braincurses::DisplayInput(const std::vector<int>& guess) {
+  auto local_window = windows_[kInputWindow];
+  for (unsigned i = 0; i < guess.size(); i++) {
+    mvwaddstr(local_window, 1, kColumn[i], ColorName(guess[i]));
+  }
+}
+
 std::vector<int> Braincurses::GetInput() {
   std::string delStr (kInputLength, ' ');
   std::vector<int> guessInput (code_.Length(), -1);
-  int column[6] = {2, 11, 20, 29, 38, 47};
   int input;
 
-  auto local_window = windows_[kInputWindow];
-
-  keypad(local_window, TRUE);
   int x = 0;
   while (true) {
-    input = mvwgetch(local_window, 1, column[x]);
+    auto local_window = windows_[kInputWindow];
+    wmove(local_window, 1, kColumn[x]);
+    input = GetKey(local_window);
+    int color = -1;
     switch (input) {
       case 'r':
-        mvwaddstr(local_window, 1, column[x], delStr.c_str());
-        mvwaddstr(local_window, 1, column[x], "red");
-        guessInput[x] = COLOR_RED;
-        x++;
+        color = COLOR_RED;
         break;
       case 'g':
-        mvwaddstr(local_window, 1, column[x], delStr.c_str());
-        mvwaddstr(local_window, 1, column[x], "green");
-        guessInput[x] = COLOR_GREEN;
-        x++;
+        color = COLOR_GREEN;
         break;
       case 'y':
-        mvwaddstr(local_window, 1, column[x], delStr.c_str());
-        mvwaddstr(local_window, 1, column[x], "yellow");
-        guessInput[x] = COLOR_YELLOW;
-        x++;
+        color = COLOR_YELLOW;
         break;
       case 'b':
-        mvwaddstr(local_window, 1, column[x], delStr.c_str());
-        mvwaddstr(local_window, 1, column[x], "blue");
-        guessInput[x] = COLOR_BLUE;
-        x++;
+        color = COLOR_BLUE;
         break;
       case 'm':
-        mvwaddstr(local_window, 1, column[x], delStr.c_str());
-        mvwaddstr(local_window, 1, column[x], "magenta");
-        guessInput[x] = COLOR_MAGENTA;
-        x++;
+        color = COLOR_MAGENTA;
         break;
       case 'w':
-        mvwaddstr(local_window, 1, column[x], delStr.c_str());
-        mvwaddstr(local_window, 1, column[x], "white");
-        guessInput[x] = COLOR_CYAN;  // Really COLOR_WHITE
-        x++;
+        color = COLOR_CYAN;  // Really COLOR_WHITE
         break;
       case KEY_LEFT:
         if (x > 0) {
           x--;
-          wmove(local_window, 1, column[x]);
         }
         break;
       case KEY_RIGHT:
@@ -201,19 +285,31 @@ std::vector<int> Braincurses::GetInput() {
         // moving off the end used to end the guess with fields left empty.
         if (x < code_.Length() - 1 && guessInput[x] != -1) {
           x++;
-          wmove(local_window, 1, column[x]);
         }
         break;
       case KEY_BACKSPACE:
       case KEY_DC:
+      case 127:
+      case 8:
         if (x > 0 && x <= code_.Length()) {
           x--;
-          mvwaddstr(local_window, 1, column[x], delStr.c_str());
+          mvwaddstr(local_window, 1, kColumn[x], delStr.c_str());
           guessInput[x] = -1;
         }
         break;
+      case KEY_RESIZE:
+        Resize();
+        DisplayInput(guessInput);
+        break;
       default:
         break;
+    }
+    local_window = windows_[kInputWindow];
+    if (color != -1) {
+      mvwaddstr(local_window, 1, kColumn[x], delStr.c_str());
+      mvwaddstr(local_window, 1, kColumn[x], ColorName(color));
+      guessInput[x] = color;
+      x++;
     }
     if (x == code_.Length()) {
       // The guess is done once every field has a colour; otherwise go back
@@ -223,11 +319,11 @@ std::vector<int> Braincurses::GetInput() {
         break;
       }
       x = empty - guessInput.begin();
-      wmove(local_window, 1, column[x]);
     }
+    wmove(local_window, 1, kColumn[x]);
     wrefresh(local_window);
   }
-  CleanUpWindow(local_window);
+  CleanUpWindow(windows_[kInputWindow]);
   return guessInput;
 }
 
@@ -281,14 +377,15 @@ bool Braincurses::IsWinner(std::vector<int> correct) {
   return winner;
 }
 
+// The result stays in the information panel while the input line asks
+// whether to play again (it used to be cleared at once by the question).
 bool Braincurses::GameOverPlayAgain(bool winner) {
-  CleanUpWindow(windows_[kInputWindow]);
   if (winner) {
-    mvwaddstr(windows_[kInputWindow], 1, 1, "You win! Congratulations!");
+    message_ = "You win!\nCongratulations!";
   } else {
-    mvwaddstr(windows_[kInputWindow], 1, 1, "You ran out of turns; better luck next time.");
+    message_ = "You ran out of\nturns; better luck\nnext time.";
   }
-  wrefresh(windows_[kInputWindow]);
+  Redraw();
   return PlayAgain();
 }
 
@@ -312,16 +409,26 @@ void Braincurses::DisplayCode(bool colored) {
 }
 
 bool Braincurses::PlayAgain() {
-  CleanUpWindow(windows_[kInputWindow]);
-  mvwaddstr(windows_[kInputWindow], 1, 1, "Would you like to play again? ([Y]/n) ");
-  wrefresh(windows_[kInputWindow]);
+  while (true) {
+    CleanUpWindow(windows_[kInputWindow]);
+    mvwaddstr(windows_[kInputWindow], 1, 1, "Would you like to play again? ([Y]/n) ");
+    wrefresh(windows_[kInputWindow]);
 
-  int again = tolower(wgetch(windows_[kInputWindow]));
-  return (again == 'y' || again == '\n' ? true : false);
+    int again = GetKey(windows_[kInputWindow]);
+    if (again == KEY_RESIZE) {
+      Resize();
+      continue;
+    }
+    again = tolower(again);
+    return (again == 'y' || again == '\n' ? true : false);
+  }
 }
 
 bool Braincurses::PlayGame() {
   code_.Create();
+  history_.clear();
+  code_shown_ = false;
+  message_.clear();
   WipeBoard();
   PrepareBoard();
 
@@ -330,6 +437,7 @@ bool Braincurses::PlayGame() {
   for (int i = 0; i < guesses_; i++) {
     std::vector<int> guess = GetInput();
     correct = code_.IsCorrect(guess.begin(), guess.end());
+    history_.emplace_back(guess, correct);
 
     DisplayGuess(i, guess);
     DisplayMarkers(i, correct);
@@ -338,6 +446,7 @@ bool Braincurses::PlayGame() {
       break;
     }
   }
+  code_shown_ = true;
   DisplayCode(true);
   return winner;
 }
