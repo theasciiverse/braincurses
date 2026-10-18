@@ -68,4 +68,7 @@ class Braincurses {
 
 void endwin_handler(void);
 
+// Set by SIGINT, SIGTERM and SIGHUP: the game quits at the next key read.
+extern volatile int quit_requested;
+
 #endif  // BRAINCURSES_H

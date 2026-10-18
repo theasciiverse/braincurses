@@ -68,10 +68,7 @@ void Braincurses::CreateWindows() {
     mvaddstr(1, 0, "BrainCurses needs 60x23.");
     mvaddstr(2, 0, "q quits.");
     refresh();
-    int key = GetKey(stdscr);
-    if (key == 'q') {
-      exit(EXIT_SUCCESS);
-    }
+    GetKey(stdscr);
   }
   erase();
   refresh();
@@ -99,10 +96,14 @@ void Braincurses::DeleteWindows() {
   windows_.clear();
 }
 
-// Reads a key; a resized terminal is answered here by drawing the board
-// again in the middle.
+// Reads a key. q, Ctrl+C, SIGTERM and SIGHUP quit; the atexit handler
+// puts the terminal back.
 int Braincurses::GetKey(WINDOW* window) {
-  return wgetch(window);
+  int key = quit_requested ? ERR : wgetch(window);
+  if (quit_requested || key == 'q') {
+    exit(EXIT_SUCCESS);
+  }
+  return key;
 }
 
 // Draws everything that is on the board again, after the windows were made

@@ -57,28 +57,36 @@ void endwin_atexit_handler() {
   endwin();
 }
 
-void endwin_signal_handler(int signal) {
-  endwin();
-  std::exit(EXIT_SUCCESS);
-};
+volatile int quit_requested = 0;
+
+// Only sets a flag: the next key read quits, and the atexit handler puts
+// the terminal back. No SA_RESTART, so a waiting wgetch() returns at once.
+void quit_signal_handler(int signal) {
+  quit_requested = 1;
+}
 
 int main(int argc, char* argv[]) {
   int code_length = kMinCodeLength;
   int guesses = kDefaultGuessCount;
   ProcessArgs(argc, argv, code_length, guesses);
 
-  // Box drawing and the rest in the terminal's own character set.
-  std::setlocale(LC_ALL, "");
-
-  Braincurses bc(code_length, guesses);
-
-  std::signal(SIGINT, endwin_signal_handler);
-
   int result = std::atexit(endwin_atexit_handler);
   if (result != 0) {
     std::cerr << "atexit registration failed" << std::endl;
     return EXIT_FAILURE;
   }
+
+  struct sigaction action = {};
+  action.sa_handler = quit_signal_handler;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGINT, &action, nullptr);
+  sigaction(SIGTERM, &action, nullptr);
+  sigaction(SIGHUP, &action, nullptr);
+
+  // Box drawing and the rest in the terminal's own character set.
+  std::setlocale(LC_ALL, "");
+
+  Braincurses bc(code_length, guesses);
 
   bool winner = false;
   do {
