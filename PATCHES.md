@@ -87,3 +87,9 @@ clean. Windows: cross-built with MinGW-w64 against wide PDCurses 3.9 and
 run under Wine 10: colours typed, Backspace and arrows, a guess scored,
 q quits with status 0 (Wine's console in tmux shows the box lines as
 question marks). macOS: not built here.
+
+## Ours
+
+- **How to play it, at the top of README.md.** A short note on installing and
+  starting it with av, or from a release archive; the original text follows
+  unchanged.
